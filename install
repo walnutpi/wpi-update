@@ -1,0 +1,19 @@
+#!/bin/bash
+
+
+
+PATH_PWD="$(dirname "$(realpath "${BASH_SOURCE[0]}")")"
+
+
+# 为系统添加wpi-update命令
+chmod +x $PATH_PWD/wpi-update
+bin_path="/usr/bin/wpi-update"
+
+if [ -f $bin_path ]; then
+    rm $bin_path
+fi
+cp $PATH_PWD/wpi-update $bin_path
+
+echo_green "[OK]\t wpi-update is ready"
+
+
