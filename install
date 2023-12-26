@@ -4,6 +4,10 @@
 
 PATH_PWD="$(dirname "$(realpath "${BASH_SOURCE[0]}")")"
 
+echo_green() {
+    echo -e "\r\033[32m$1\033[0m"
+}
+
 
 # 为系统添加wpi-update命令
 chmod +x $PATH_PWD/wpi-update
