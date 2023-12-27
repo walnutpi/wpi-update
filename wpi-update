@@ -62,7 +62,7 @@ declare -A STR_AUTO
 STR_CN['sudo_warn']="\n\t请使用sudo来运行本指令\n"
 STR_EN['sudo_warn']="\n\tError:  please use sudo !\n"
 
-STR_CN['version_newest_h']="\n\t你的系统版本已经是最新的  ,无需更新\n"
+STR_CN['version_newest_h']="\n\t你的系统版本已经是最新的  ,无需更新"
 STR_CN['version_newest_l']="  ,无需更新\n"
 STR_EN['version_newest_h']="\n\tYour system version is already up to "
 STR_EN['version_newest_l']="  ,No need to update\n"
