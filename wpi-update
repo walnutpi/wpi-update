@@ -12,6 +12,7 @@ RELEASE_FILE="/etc/WalnutPi-release"
 FILE_LOG_SAVE="/tmp/wpi-update-update.log"
 FILE_PACKAGES="/tmp/wpi-update-packages.txt"
 
+
 run_status() {
     local message=$1
     shift
@@ -44,16 +45,6 @@ echo_blue() {
     echo -e "\r\033[36m$1\033[0m"
 }
 
-
-echo_auto_detect() {
-    str_cn=$1
-    str_en=$2
-    if [[ $LANG ==  zh_CN* ]]; then
-        echo -e $str_cn
-    else
-        echo -e $str_en
-    fi
-}
 
 declare -A STR_CN
 declare -A STR_EN
@@ -171,12 +162,17 @@ echo -e "${STR_AUTO['backup_warn']}"
 
 sed -n "1,/\\[$LAST_DATE\\]/p" $FILE_LOG_SAVE | sed '/\['$LAST_DATE'\]/d'
 echo -n "${STR_AUTO['are_u_redy']} "
-read -p "[Y/n]" CHOICE
-if [[ "$CHOICE" != "y" && "$CHOICE" != "Y" ]]; then
-    echo -e "${STR_AUTO['abort']}."
-    exit 1
-fi
 
+if [[ $* =~ -y ]] || [[  $* =~ -Y ]]; then
+    echo ""
+else
+    read -p "[Y/n]" CHOICE
+    if [[ "$CHOICE" != "y" && "$CHOICE" != "Y" ]]; then
+        echo -e "${STR_AUTO['abort']}."
+        exit 1
+    fi
+
+fi
 
 # 获取更新，安装
 run_status "get the package info ..." apt-get update -o Dir::Etc::sourcelist="$TMP_SOURCE_FILE" -o Dir::Etc::sourceparts="-" -o APT::Get::List-Cleanup="0"
