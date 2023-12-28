@@ -104,11 +104,12 @@ FLAG=$1
 
 
 # 从文件中获取版本号和日期
-BOARD_VER=$(grep '^version=' $RELEASE_FILE | cut -d '=' -f 2)
-BOARD_DATE=$(grep '^date=' $RELEASE_FILE | cut -d '=' -f 2)
-# echo "BOARD_VER: $BOARD_VER"
-# echo "BOARD_DATE: $BOARD_DATE"
-
+if [[ -f $RELEASE_FILE ]]; then
+    BOARD_VER=$(grep '^version=' $RELEASE_FILE | cut -d '=' -f 2)
+    BOARD_DATE=$(grep '^date=' $RELEASE_FILE | cut -d '=' -f 2)
+    # echo "BOARD_VER: $BOARD_VER"
+    # echo "BOARD_DATE: $BOARD_DATE"
+fi
 
 
 # 获取网站上存储的本脚本,进行更新
@@ -152,7 +153,7 @@ for DATE in $DATES_IN_LOG; do
 done
 NEW_VERSION=$(grep -o '\[[^]]*\] - [^ ]*' $FILE_LOG_SAVE | head -n 1 | awk '{print $3}')
 if [[ $* =~ -v ]]; then
-    echo "新版本= $NEW_VERSION"
+    echo "新版本= $NEW_VERSION "
     exit 0
 fi
 
