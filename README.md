@@ -12,7 +12,12 @@ sudo wpi-update
 sudo wpi-update -y
 ```
 
-## 输出新版本的版本号
+## 输出脚本的版本号
 ```
 sudo wpi-update -v
+```
+
+## 输出服务器端的最新系统版本号
+```
+sudo wpi-update -s
 ```
