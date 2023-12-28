@@ -11,3 +11,8 @@ sudo wpi-update
 ```
 sudo wpi-update -y
 ```
+
+## 输出新版本的版本号
+```
+sudo wpi-update -v
+```
