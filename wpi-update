@@ -1,5 +1,5 @@
 #!/bin/bash
-THIS_SCRIPT_VERSION=1.0
+THIS_SCRIPT_VERSION=1.1
 THIS_SCRIPT_URL="http://apt.walnutpi.com//debian/wpi-update"
 THIS_SCRIPT_SAVE="/tmp/wpi-update-air"
 
