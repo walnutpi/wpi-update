@@ -12,6 +12,12 @@ sudo wpi-update
 sudo wpi-update -y
 ```
 
+## 安装指定包
+未做自动补全支持
+```
+sudo wpi-update install xxxx
+```
+
 ## 输出脚本的版本号
 ```
 sudo wpi-update -v
