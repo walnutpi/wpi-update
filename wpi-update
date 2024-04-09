@@ -242,8 +242,6 @@ package_opt "add-$BOARD_OS_TYPE" "add" install
 apt-get --just-print upgrade -o Dir::Etc::sourcelist="$TMP_SOURCE_FILE" -o Dir::Etc::sourceparts="-" -o APT::Get::List-Cleanup="0" | grep 'Inst' | cut -d ' ' -f 2 >  $FILE_PACKAGES
 package_opt "$FILE_PACKAGES" "update"  install
 
-exit 1
-
 
 # 替换新版本号
 sed -i "s/^version=.*/version=$NEW_VERSION/" $RELEASE_FILE
