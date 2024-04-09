@@ -1,15 +1,16 @@
 #!/bin/bash
 THIS_SCRIPT_VERSION=1.3
-THIS_SCRIPT_URL="http://apt.walnutpi.com//debian/wpi-update.gz"
+SERVER_DOMAIN="apt.walnutpi.com"
+THIS_SCRIPT_URL="http://${SERVER_DOMAIN}//debian/wpi-update.gz"
 THIS_SCRIPT_SAVE="/tmp/wpi-update.gz"
 THIS_SCRIPT_FILE="/tmp/wpi-update"
 
-SOURCE_STR="deb [trusted=yes] http://apt.walnutpi.com//debian/ bookworm main"
+SOURCE_STR="deb [trusted=yes] http://${SERVER_DOMAIN}//debian/ bookworm main"
 BOARD_MODEL=$(tr -d '\0' < /proc/device-tree/model)
-PATCH_LIST_URL="http://apt.walnutpi.com/debian/patch-list/${BOARD_MODEL}.gz"
+PATCH_LIST_URL="http://${SERVER_DOMAIN}/debian/patch-list/${BOARD_MODEL}.gz"
 TMP_SOURCE_FILE="/tmp/wpi-update-source"
-LOG_URL_CN="http://apt.walnutpi.com/debian/release-cn.log"
-LOG_URL_EN="http://apt.walnutpi.com/debian/release-en.log"
+LOG_URL_CN="http://${SERVER_DOMAIN}/debian/release-cn.log"
+LOG_URL_EN="http://${SERVER_DOMAIN}/debian/release-en.log"
 LOG_URL=""
 RELEASE_FILE="/etc/WalnutPi-release"
 FILE_LOG_SAVE="/tmp/wpi-update-update.log"
