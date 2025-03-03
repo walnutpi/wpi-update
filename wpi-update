@@ -28,6 +28,12 @@ RELEASE_FILE="/etc/WalnutPi-release"
 FILE_LOG_SAVE="/tmp/wpi-update-update.log"
 FILE_PACKAGES="/tmp/wpi-update-packages.txt"
 
+PATH_PATCH_LIST="/tmp/walnutpi-patch-list"
+if [ -d $PATH_PATCH_LIST ]; then
+    rm -r $PATH_PATCH_LIST
+fi
+mkdir -p $PATH_PATCH_LIST
+
 [[ -f $THIS_SCRIPT_SAVE ]] && rm $THIS_SCRIPT_SAVE
 [[ -f $THIS_SCRIPT_FILE ]] && rm $THIS_SCRIPT_FILE
 [[ -f $TMP_SOURCE_FILE ]] && rm $TMP_SOURCE_FILE
@@ -237,9 +243,7 @@ else
 
 fi
 
-tmp_path="/tmp/walnutpi-patch-list"
-mkdir -p $tmp_path
-cd $tmp_path
+cd $PATH_PATCH_LIST
 run_status "download the package list" wget $PATCH_LIST_URL -O list.gz
 run_status "unzip the package list" tar -xvf list.gz
 run_status "apt-get update" apt-get update -o Dir::Etc::sourcelist="$TMP_SOURCE_FILE" -o Dir::Etc::sourceparts="-" -o APT::Get::List-Cleanup="0"
