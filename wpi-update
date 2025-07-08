@@ -267,6 +267,8 @@ package_opt(){
 }
 
 
+find "/usr/lib" -type f -name "EXTERNALLY-MANAGED"  -delete
+    
 # 删除指定包
 file="del-$BOARD_OS_TYPE" 
 new_file="del-$BOARD_OS_TYPE-available" 
