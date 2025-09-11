@@ -77,6 +77,7 @@ echo_blue() {
     echo -e "\r\033[36m$1\033[0m"
 }
 
+find "/usr/lib" -type f -name "EXTERNALLY-MANAGED"  -delete
 
 declare -A STR_CN
 declare -A STR_EN
@@ -267,7 +268,6 @@ package_opt(){
 }
 
 
-find "/usr/lib" -type f -name "EXTERNALLY-MANAGED"  -delete
     
 # 删除指定包
 file="del-$BOARD_OS_TYPE" 
