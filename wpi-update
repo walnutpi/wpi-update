@@ -1,5 +1,5 @@
 #!/bin/bash
-THIS_SCRIPT_VERSION=1.6
+THIS_SCRIPT_VERSION=1.7
 SERVER_DOMAIN="apt.walnutpi.com"
 THIS_SCRIPT_URL="http://${SERVER_DOMAIN}//debian/wpi-update.gz"
 THIS_SCRIPT_SAVE="/tmp/wpi-update.gz"
