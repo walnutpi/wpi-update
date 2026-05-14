@@ -1,20 +1,23 @@
 #!/bin/bash
-THIS_SCRIPT_VERSION=1.7
+THIS_SCRIPT_VERSION=1.8
 SERVER_DOMAIN="apt.walnutpi.com"
 THIS_SCRIPT_URL="http://${SERVER_DOMAIN}//debian/wpi-update.gz"
 THIS_SCRIPT_SAVE="/tmp/wpi-update.gz"
 THIS_SCRIPT_FILE="/tmp/wpi-update"
 
-SOURCE_STR_WALNUTPI="deb [trusted=yes] http://${SERVER_DOMAIN}//debian/ bookworm main"
-SOURCE_STR_TSINGHUA="deb http://mirrors.tuna.tsinghua.edu.cn/debian bookworm main"
 if [ -f /proc/device-tree/model ];then
     BOARD_MODEL=$(tr -d '\0' < /proc/device-tree/model)
 elif [ -f /etc/model ];then
     BOARD_MODEL=$(tr -d '\0' < /etc/model)
 elif [ -f /tmp/walnutpi-board_model ];then
     BOARD_MODEL=$(tr -d '\0' < /tmp/walnutpi-board_model)
-
 fi
+# BOARD_MODEL转换为小写
+BOARD_MODEL=$(echo $BOARD_MODEL | tr '[:upper:]' '[:lower:]')
+
+SOURCE_STR_WALNUTPI="deb [trusted=yes] http://${SERVER_DOMAIN}//debian/ bookworm $BOARD_MODEL"
+SOURCE_STR_TSINGHUA="deb http://mirrors.tuna.tsinghua.edu.cn/debian bookworm main"
+
 
 # /tmp/walnutpi-board_model
 PATCH_LIST_URL="http://${SERVER_DOMAIN}/debian/patch-list/${BOARD_MODEL}.gz"
