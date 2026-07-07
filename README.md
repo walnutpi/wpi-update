@@ -27,3 +27,8 @@ sudo wpi-update -v
 ```
 sudo wpi-update -s
 ```
+
+## 输出更新信息
+```shell
+wpi-update -l
+```

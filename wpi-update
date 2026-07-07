@@ -182,6 +182,36 @@ case $COMMAND in
         echo "$NEW_VERSION "
         exit 0
         ;;
+    -l)
+        run_as_silent wget -c $LOG_URL -O $FILE_LOG_SAVE
+        if [ $? -ne 0 ]; then
+            echo_red "download the release log .... [error]"
+            wget -c $LOG_URL -O $FILE_LOG_SAVE
+            exit 1
+        fi
+        NEW_VERSION=$(grep -o '\[[^]]*\] - [^ ]*' $FILE_LOG_SAVE | head -n 1 | awk '{print $3}')
+        if [[ -f $RELEASE_FILE ]]; then
+            BOARD_DATE=$(grep '^date=' $RELEASE_FILE | cut -d '=' -f 2)
+            BOARD_DATE_SECONDS=$(date -d"$BOARD_DATE" +%s)
+        else
+            BOARD_DATE_SECONDS=0
+        fi
+        DATE_LAST=""
+        DATES_IN_LOG=$(grep -o '\[[^]]*\]' $FILE_LOG_SAVE | tr -d '[]')
+        for DATE in $DATES_IN_LOG; do
+            DATE_SECONDS=$(date -d"$DATE" +%s)
+            if (( DATE_SECONDS <= BOARD_DATE_SECONDS )); then
+                DATE_LAST=$DATE
+                break
+            fi
+        done
+        if [ -n "$DATE_LAST" ]; then
+            sed -n "1,/\\[$DATE_LAST\\]/p" $FILE_LOG_SAVE | sed '/\['$DATE_LAST'\]/d'
+        else
+            cat $FILE_LOG_SAVE
+        fi
+        exit 0
+        ;;
     install)
         
         run_status "get the package info ..." apt-get update -o Dir::Etc::sourcelist="$TMP_SOURCE_FILE_WPI" -o Dir::Etc::sourceparts="-" -o APT::Get::List-Cleanup="0"
