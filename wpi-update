@@ -146,8 +146,19 @@ if [[ $COMMAND != "no_update" ]]; then
     if [ -f $THIS_SCRIPT_SAVE ]; then
         rm $THIS_SCRIPT_SAVE
     fi
-    run_status "get updates ..."  wget -c $THIS_SCRIPT_URL -O $THIS_SCRIPT_SAVE
-    run_status "unzip the file" tar -xvf $THIS_SCRIPT_SAVE -C /tmp
+    run_as_silent wget -c $THIS_SCRIPT_URL -O $THIS_SCRIPT_SAVE
+    if [ $? -ne 0 ]; then
+        echo_red "get updates ... [error]"
+        wget -c $THIS_SCRIPT_URL -O $THIS_SCRIPT_SAVE
+        exit 1
+    fi
+
+    run_as_silent tar -xvf $THIS_SCRIPT_SAVE -C /tmp
+    if [ $? -ne 0 ]; then
+        echo_red "unzip the file ... [error]"
+        tar -xvf $THIS_SCRIPT_SAVE -C /tmp
+        exit 1
+    fi
     NEW_SCRIPT_VERSION=$(grep -o 'THIS_SCRIPT_VERSION=[0-9.]*' $THIS_SCRIPT_FILE | cut -d '=' -f 2)
 
     if [[ "$NEW_SCRIPT_VERSION" > "$THIS_SCRIPT_VERSION" ]]; then
