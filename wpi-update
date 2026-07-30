@@ -1,351 +1,824 @@
 #!/bin/bash
-THIS_SCRIPT_VERSION=1.8
+set -euo pipefail
+
+# ============================================================
+# 配置常量
+# ============================================================
+THIS_SCRIPT_VERSION=1.9
 SERVER_DOMAIN="apt.walnutpi.com"
 THIS_SCRIPT_URL="http://${SERVER_DOMAIN}//debian/wpi-update.gz"
 THIS_SCRIPT_SAVE="/tmp/wpi-update.gz"
 THIS_SCRIPT_FILE="/tmp/wpi-update"
 
-if [ -f /proc/device-tree/model ];then
-    BOARD_MODEL=$(tr -d '\0' < /proc/device-tree/model)
-elif [ -f /etc/model ];then
-    BOARD_MODEL=$(tr -d '\0' < /etc/model)
-elif [ -f /tmp/walnutpi-board_model ];then
-    BOARD_MODEL=$(tr -d '\0' < /tmp/walnutpi-board_model)
-fi
-# BOARD_MODEL转换为小写
-BOARD_MODEL=$(echo $BOARD_MODEL | tr '[:upper:]' '[:lower:]')
-
-SOURCE_STR_WALNUTPI="deb [trusted=yes] http://${SERVER_DOMAIN}//debian/ bookworm $BOARD_MODEL"
-SOURCE_STR_TSINGHUA="deb http://mirrors.tuna.tsinghua.edu.cn/debian bookworm main"
-
-
-# /tmp/walnutpi-board_model
-PATCH_LIST_URL="http://${SERVER_DOMAIN}/debian/patch-list/${BOARD_MODEL}.gz"
-TMP_SOURCE_FILE="/tmp/wpi-update-source"
-TMP_SOURCE_FILE_WPI="/tmp/wpi-update-source-wpi"
-LOG_URL_PREFIX="http://${SERVER_DOMAIN}/debian/release-log"
-LOG_URL_CN="${LOG_URL_PREFIX}/${BOARD_MODEL}_cn.log"
-LOG_URL_EN="${LOG_URL_PREFIX}/${BOARD_MODEL}_en.log"
-LOG_URL=""
 RELEASE_FILE="/etc/WalnutPi-release"
+LOG_URL_PREFIX="http://${SERVER_DOMAIN}/debian/release-log"
 FILE_LOG_SAVE="/tmp/wpi-update-update.log"
 FILE_PACKAGES="/tmp/wpi-update-packages.txt"
-
+TMP_SOURCE_FILE_WPI="/tmp/wpi-update-source-wpi"
+TMP_SOURCE_FILE="/tmp/wpi-update-source"
 PATH_PATCH_LIST="/tmp/walnutpi-patch-list"
-if [ -d $PATH_PATCH_LIST ]; then
-    rm -r $PATH_PATCH_LIST
-fi
-mkdir -p $PATH_PATCH_LIST
-
-[[ -f $THIS_SCRIPT_SAVE ]] && rm $THIS_SCRIPT_SAVE
-[[ -f $THIS_SCRIPT_FILE ]] && rm $THIS_SCRIPT_FILE
-[[ -f $TMP_SOURCE_FILE ]] && rm $TMP_SOURCE_FILE
-[[ -f $TMP_SOURCE_FILE_WPI ]] && rm $TMP_SOURCE_FILE_WPI
-[[ -f $FILE_LOG_SAVE ]] && rm $FILE_LOG_SAVE
-[[ -f $FILE_PACKAGES ]] && rm $FILE_PACKAGES
-
-run_as_silent() {
-    $@ > /dev/null 2>&1
+# ============================================================
+# 工具函数
+# ============================================================
+cleanup() {
+    rm -rf "$PATH_PATCH_LIST" "$THIS_SCRIPT_SAVE" "$THIS_SCRIPT_FILE" \
+           "$TMP_SOURCE_FILE" "$TMP_SOURCE_FILE_WPI" \
+           "$FILE_LOG_SAVE" "$FILE_PACKAGES" 2>/dev/null || true
 }
+trap cleanup EXIT
+
+echo_red()    { echo -e "\r\033[31m$1\033[0m"; }
+echo_green()  { echo -e "\r\033[32m$1\033[0m"; }
 
 run_status() {
-    local message=$1
+    local message="$1"
     shift
-    # set +e
-    local start_time=$(date +%s)
-    while true; do
-        echo -e  -n "...\t$message"
-        output=$("$@" 2>&1)
-        exit_status=$?
-        if [ $exit_status -ne 0 ]; then
-            echo -e "\r\033[31m[error]\033[0m"
-            echo -e $output
-            exit 1
-        else
-            end_time=$(date +%s)
-            duration=$((end_time - start_time))
-            echo -e "\r\033[32m[ok]\033[0m\t${message}"
+    echo -n "...	$message"
+    local output
+    output=$("$@" 2>&1) || {
+        echo -e "\r\033[31m[error]\033[0m"
+        echo "$output"
+        exit 1
+    }
+    echo -e "\r\033[32m[ok]\033[0m	$message"
+}
+
+# 数字逐段比较版本号: $1 > $2 返回 0
+version_gt() {
+    local IFS=.
+    local a=($1) b=($2)
+    local i
+    for ((i=0; i<${#a[@]} || i<${#b[@]}; i++)); do
+        local av=${a[$i]:-0}
+        local bv=${b[$i]:-0}
+        (( av > bv )) && return 0
+        (( av < bv )) && return 1
+    done
+    return 1
+}
+
+# ============================================================
+# 检测板卡型号
+# ============================================================
+detect_board_model() {
+    local model=""
+    if [ -f /proc/device-tree/model ]; then
+        model=$(tr -d '\0' < /proc/device-tree/model)
+    elif [ -f /etc/model ]; then
+        model=$(tr -d '\0' < /etc/model)
+    elif [ -f /tmp/walnutpi-board_model ]; then
+        model=$(tr -d '\0' < /tmp/walnutpi-board_model)
+    fi
+    echo "${model,,}"  # 转小写
+}
+
+# ============================================================
+# 国际化
+# ============================================================
+setup_i18n() {
+    declare -gA STR
+
+    if [[ $LANG == zh_CN* ]]; then
+        LOG_URL="${LOG_URL_PREFIX}/${BOARD_MODEL}_cn.log"
+        STR[sudo_warn]="\n\t请使用sudo来运行本指令\n"
+        STR[newest]="\n\t你的系统版本已经是最新的 [%s]，无需更新\n"
+        STR[backup_warn]="\n\t=================================\n\t||前注意备份好个人数据,以免发生意外\n\t=================================\n"
+        STR[are_u_ready]="您希望继续执行吗？"
+        STR[abort]="中止"
+    else
+        LOG_URL="${LOG_URL_PREFIX}/${BOARD_MODEL}_en.log"
+        STR[sudo_warn]="\n\tError:  please use sudo !\n"
+        STR[newest]="\n\tYour system version is already up to [%s], No need to update\n"
+        STR[backup_warn]="\n\t========================================================\n\tBe sure to back up your personal data to avoid accidents\n\t========================================================\n"
+        STR[are_u_ready]="Do you want to continue?"
+        STR[abort]="Abort"
+    fi
+}
+
+# ============================================================
+# Release log 工具
+# ============================================================
+download_release_log() {
+    local url="${1:-$LOG_URL}"
+    rm -f "$FILE_LOG_SAVE"
+    wget -q -c "$url" -O "$FILE_LOG_SAVE" || {
+        echo_red "download release log ... [error]"
+        exit 1
+    }
+}
+
+# 从 release log 提取最新版本号
+get_newest_version() {
+    grep -o '\[[^]]*\] - [^ ]*' "$FILE_LOG_SAVE" | head -n 1 | awk '{print $3}'
+}
+
+# 从 release log 提取所有日期（从新到旧）
+get_dates_from_log() {
+    grep -o '\[[^]]*\]' "$FILE_LOG_SAVE" | tr -d '[]'
+}
+
+# 读取本地版本信息
+load_local_version() {
+    if [[ -f $RELEASE_FILE ]]; then
+        BOARD_VER=$(grep '^version=' "$RELEASE_FILE" | cut -d '=' -f 2)
+        BOARD_DATE=$(grep '^date=' "$RELEASE_FILE" | cut -d '=' -f 2)
+        BOARD_OS_TYPE=$(grep '^os_type=' "$RELEASE_FILE" | cut -d '=' -f 2)
+    else
+        BOARD_VER="0"
+        BOARD_DATE="1970-01-01"
+        BOARD_OS_TYPE="bookworm"
+    fi
+}
+
+# 检查是否需要更新，设置 HAS_NEW / NEW_VERSION / LAST_DATE
+check_update() {
+    local new_ver="$1"
+    local local_date_secs
+    local_date_secs=$(date -d"$BOARD_DATE" +%s 2>/dev/null || echo 0)
+
+    local dates
+    dates=$(get_dates_from_log)
+
+    # 条件 A: 日期比较
+    for d in $dates; do
+        local d_secs
+        d_secs=$(date -d"$d" +%s 2>/dev/null || echo 0)
+        if (( d_secs > local_date_secs )); then
+            HAS_NEW=yes
+        fi
+        if (( d_secs <= local_date_secs )); then
+            LAST_DATE="$d"
             break
         fi
     done
-    # set -e
-}
-echo_red() {
-    echo -e "\r\033[31m$1\033[0m"
-}
-echo_green() {
-    echo -e "\r\033[32m$1\033[0m"
-}
-echo_blue() {
-    echo -e "\r\033[36m$1\033[0m"
+
+    # 条件 B: 版本号比较
+    if version_gt "$new_ver" "$BOARD_VER"; then
+        HAS_NEW=yes
+    fi
 }
 
-find "/usr/lib" -type f -name "EXTERNALLY-MANAGED"  -delete
+# 展示增量 changelog
+show_changelog() {
+    if [[ -n ${LAST_DATE:-} ]]; then
+        sed -n "1,/\\[${LAST_DATE}\\]/p" "$FILE_LOG_SAVE" | sed '/\['"${LAST_DATE}"'\]/d'
+    else
+        cat "$FILE_LOG_SAVE"
+    fi
+}
 
-declare -A STR_CN
-declare -A STR_EN
-declare -A STR_AUTO
+# ============================================================
+# 子命令实现
+# ============================================================
+cmd_version() {
+    echo "$THIS_SCRIPT_VERSION"
+    exit 0
+}
 
-STR_CN['sudo_warn']="\n\t请使用sudo来运行本指令\n"
-STR_EN['sudo_warn']="\n\tError:  please use sudo !\n"
+cmd_server_version() {
+    download_release_log
+    get_newest_version
+    exit 0
+}
 
-STR_CN['version_newest_h']="\n\t你的系统版本已经是最新的"
-STR_CN['version_newest_l']="  ,无需更新\n"
-STR_EN['version_newest_h']="\n\tYour system version is already up to "
-STR_EN['version_newest_l']="  ,No need to update\n"
+cmd_log() {
+    download_release_log
+    load_local_version
+    local local_date_secs=0
+    [[ "$BOARD_DATE" != "1970-01-01" ]] && local_date_secs=$(date -d"$BOARD_DATE" +%s 2>/dev/null || echo 0)
 
-STR_CN['backup_warn']=$(cat <<- 'EOF'
-\t=================================
-\t||前注意备份好个人数据,以免发生意外
-\t=================================
-EOF
-)
-STR_EN['backup_warn']=$(cat <<- 'EOF'
-\t========================================================
-\tBe sure to back up your personal data to avoid accidents
-\t========================================================
-EOF
-)
-STR_CN['are_u_redy']="您希望继续执行吗？"
-STR_EN['are_u_redy']="Do you want to continue?"
-
-STR_CN['abort']="中止"
-STR_EN['abort']="Abort"
-
-STR_CN['install_error']="ERROR: 获取不到可更新的包"
-STR_EN['install_error']="ERROR: Could not get updatable package"
-
-
-if [[ $LANG ==  zh_CN* ]]; then
-    LOG_URL=$LOG_URL_CN
-    for key in "${!STR_CN[@]}"; do
-        STR_AUTO[$key]="${STR_CN[$key]}"
+    local last=""
+    local dates
+    dates=$(get_dates_from_log)
+    for d in $dates; do
+        local d_secs
+        d_secs=$(date -d"$d" +%s 2>/dev/null || echo 0)
+        if (( d_secs <= local_date_secs )); then
+            last="$d"
+            break
+        fi
     done
-else
-    LOG_URL=$LOG_URL_EN
-    for key in "${!STR_EN[@]}"; do
-        STR_AUTO[$key]="${STR_EN[$key]}"
+
+    if [[ -n $last ]]; then
+        sed -n "1,/\\[${last}\\]/p" "$FILE_LOG_SAVE" | sed '/\['"${last}"'\]/d'
+    else
+        cat "$FILE_LOG_SAVE"
+    fi
+    exit 0
+}
+
+cmd_install() {
+    local pkg="${1:-}"
+    echo -e "$SOURCE_STR_WALNUTPI" > "$TMP_SOURCE_FILE_WPI"
+    echo -e "$SOURCE_STR_WALNUTPI" > "$TMP_SOURCE_FILE"
+    echo -e "$SOURCE_STR_TSINGHUA" >> "$TMP_SOURCE_FILE"
+
+    run_status "get the package info ..." apt-get update \
+        -o Dir::Etc::sourcelist="$TMP_SOURCE_FILE_WPI" \
+        -o Dir::Etc::sourceparts="-" \
+        -o APT::Get::List-Cleanup="0"
+
+    apt-get install \
+        -o Dir::Etc::sourcelist="$TMP_SOURCE_FILE" \
+        -o Dir::Etc::sourceparts="-" \
+        -o APT::Get::List-Cleanup="0" \
+        $pkg
+    exit 0
+}
+
+# ============================================================
+# 主更新流程
+# ============================================================
+do_update() {
+    if [[ $* =~ -[yY] ]] && [[ $BOARD_MODEL == *cybercam* ]]; then
+        local self_path
+        self_path=$(readlink -f "$0")
+        if command -v systemd-run >/dev/null 2>&1; then
+            # 以临时系统服务运行，彻底脱离登录会话，终端断开不影响更新
+            systemd-run --unit=wpi-update-fb --collect --quiet \
+                --description="wpi-update (fb mode)" "$self_path" --fb
+        else
+            # 退化方案：独立会话 + 忽略 SIGHUP + 脱离终端标准流
+            setsid nohup "$self_path" --fb </dev/null >/dev/null 2>&1 &
+        fi
+        exit 1
+    fi
+
+    # 阶段 1: 版本检测
+    load_local_version
+    download_release_log
+    NEW_VERSION=$(get_newest_version)
+
+    HAS_NEW=""
+    LAST_DATE=""
+    check_update "$NEW_VERSION"
+
+    # -N 强制更新
+    [[ $* =~ -N ]] && HAS_NEW=yes
+
+    if [[ -z $HAS_NEW ]]; then
+        printf "${STR[newest]}" "$BOARD_VER"
+        exit 0
+    fi
+
+    # 阶段 2: 展示与确认
+    clear
+    echo -e "[${BOARD_VER}] -> \033[32m[${NEW_VERSION}]\033[0m"
+    echo -e "${STR[backup_warn]}"
+    show_changelog
+    echo -n "${STR[are_u_ready]} "
+
+    if [[ $* =~ -[yY] ]]; then
+        echo ""
+    else
+        read -p "[Y/n]" CHOICE
+        if [[ "$CHOICE" != "y" && "$CHOICE" != "Y" ]]; then
+            echo -e "${STR[abort]}."
+            exit 1
+        fi
+    fi
+
+    # 阶段 3: 执行更新
+    mkdir -p "$PATH_PATCH_LIST"
+    cd "$PATH_PATCH_LIST"
+
+    local source_file="$TMP_SOURCE_FILE"
+    local source_file_wpi="$TMP_SOURCE_FILE_WPI"
+
+    run_status "download the package list" wget -q "$PATCH_LIST_URL" -O list.gz
+    run_status "unzip the package list"   tar -xf list.gz
+    run_status "apt-get update" apt-get update \
+        -o Dir::Etc::sourcelist="$source_file" \
+        -o Dir::Etc::sourceparts="-" \
+        -o APT::Get::List-Cleanup="0"
+
+    # 批量收集要操作的包
+    local del_list=() add_list=() upgrade_list=()
+
+    # 缓存 dpkg 已安装列表
+    local installed
+    installed=$(dpkg -l | awk '/^ii/ {print $2}')
+
+    # 删除废弃包
+    local del_file="del-${BOARD_OS_TYPE}"
+    if [[ -f $del_file ]]; then
+        while IFS= read -r pkg; do
+            [[ -z $pkg ]] && continue
+            echo "$installed" | grep -qxF "$pkg" && del_list+=("$pkg")
+        done < "$del_file"
+    fi
+
+    # 安装新增包
+    local add_file="add-${BOARD_OS_TYPE}"
+    if [[ -f $add_file ]]; then
+        while IFS= read -r pkg; do
+            [[ -z $pkg ]] && continue
+            echo "$installed" | grep -qxF "$pkg" || add_list+=("$pkg")
+        done < "$add_file"
+    fi
+
+    # 获取可升级包
+    local pkgs
+    pkgs=$(apt-get --just-print upgrade \
+        -o Dir::Etc::sourcelist="$source_file_wpi" \
+        -o Dir::Etc::sourceparts="-" \
+        -o APT::Get::List-Cleanup="0" 2>/dev/null \
+        | grep '^Inst' | cut -d ' ' -f 2)
+    for pkg in $pkgs; do
+        upgrade_list+=("$pkg")
     done
-fi
+
+    # 批量执行
+    local total=$(( ${#del_list[@]} + ${#add_list[@]} + ${#upgrade_list[@]} ))
+    local count=0
+
+    apt_do() {
+        local verb="$1"
+        local cmd="$2"
+        shift 2
+        [[ $# -eq 0 ]] && return
+        count=$((count + $#))
+        echo "[${count}/${total}] $verb: $*"
+        apt-get "$cmd" -y \
+            -o Dir::Etc::sourcelist="$source_file" \
+            -o Dir::Etc::sourceparts="-" \
+            -o APT::Get::List-Cleanup="0" \
+            "$@"
+    }
+
+    apt_do remove  remove  "${del_list[@]:-}"
+    apt_do add     install "${add_list[@]:-}"
+    apt_do update  install "${upgrade_list[@]:-}"
+
+    # 写回版本信息
+    local new_date
+    new_date=$(grep -o '\[[^]]*\]' "$FILE_LOG_SAVE" | head -n 1 | tr -d '[]')
+
+    if [[ -f $RELEASE_FILE ]]; then
+        sed -i "s/^version=.*/version=$NEW_VERSION/" "$RELEASE_FILE"
+        sed -i "s/^date=.*/date=$new_date/" "$RELEASE_FILE"
+    else
+        cat > "$RELEASE_FILE" <<EOF
+version=$NEW_VERSION
+date=$new_date
+os_type=$BOARD_OS_TYPE
+EOF
+    fi
+
+    echo_green "\n\n【OK】please reboot"
+}
+
+# --fb 模式：所有进度通过 framebuffer 绘制，不输出到终端
+do_update_fb() {
+    if ! fb_init; then
+        echo "fbdraw init failed, falling back to terminal mode..."
+        do_update "$@"
+        return
+    fi
+
+    if systemctl is-active --quiet cybercam-desktop.service; then
+        systemctl stop cybercam-desktop.service
+    fi
 
 
+    # === 前期准备（全部在 0% 完成，不推进进度条） ===
+    fb_render 0 "Preparing update..." 0 1
+
+    load_local_version
+    download_release_log
+    NEW_VERSION=$(get_newest_version)
+
+    HAS_NEW=""
+    LAST_DATE=""
+    check_update "$NEW_VERSION"
+
+    [[ $* =~ -N ]] && HAS_NEW=yes
+
+    if [[ -z $HAS_NEW ]]; then
+        fb_render 100 "Already up-to-date" 1 1 "$BOARD_VER" "$BOARD_VER"
+        fb_cleanup
+        exit 0
+    fi
+
+    mkdir -p "$PATH_PATCH_LIST"
+    cd "$PATH_PATCH_LIST"
+
+    local source_file="$TMP_SOURCE_FILE"
+    local source_file_wpi="$TMP_SOURCE_FILE_WPI"
+
+    wget -q "$PATCH_LIST_URL" -O list.gz || {
+        fb_render 0 "Download failed" 0 1 "$BOARD_VER" "$NEW_VERSION"
+        fb_cleanup
+        exit 1
+    }
+    tar -xf list.gz
+
+    apt-get update \
+        -o Dir::Etc::sourcelist="$source_file" \
+        -o Dir::Etc::sourceparts="-" \
+        -o APT::Get::List-Cleanup="0" 2>/dev/null
+
+    # 收集包列表
+    local del_list=() add_list=() upgrade_list=()
+
+    local installed
+    installed=$(dpkg -l | awk '/^ii/ {print $2}')
+
+    local del_file="del-${BOARD_OS_TYPE}"
+    if [[ -f $del_file ]]; then
+        while IFS= read -r pkg; do
+            [[ -z $pkg ]] && continue
+            echo "$installed" | grep -qxF "$pkg" && del_list+=("$pkg")
+        done < "$del_file"
+    fi
+
+    local add_file="add-${BOARD_OS_TYPE}"
+    if [[ -f $add_file ]]; then
+        while IFS= read -r pkg; do
+            [[ -z $pkg ]] && continue
+            echo "$installed" | grep -qxF "$pkg" || add_list+=("$pkg")
+        done < "$add_file"
+    fi
+
+    local pkgs
+    pkgs=$(apt-get --just-print upgrade \
+        -o Dir::Etc::sourcelist="$source_file_wpi" \
+        -o Dir::Etc::sourceparts="-" \
+        -o APT::Get::List-Cleanup="0" 2>/dev/null \
+        | grep '^Inst' | cut -d ' ' -f 2)
+    for pkg in $pkgs; do
+        upgrade_list+=("$pkg")
+    done
+
+    local total=$(( ${#del_list[@]} + ${#add_list[@]} + ${#upgrade_list[@]} ))
+    if [[ $total -eq 0 ]]; then
+        fb_render 100 "Nothing to do" 0 0 "$BOARD_VER" "$NEW_VERSION"
+        fb_cleanup
+        exit 0
+    fi
+
+    # === 收集每个包的大小（用于按体积加权进度） ===
+    fb_render 0 "Computing package sizes..." 0 1 "$BOARD_VER" "$NEW_VERSION"
+
+    declare -A pkg_size
+    local total_size=0
+
+    get_size() {
+        local sz
+        # apt-cache 获取下载大小（install/upgrade 包）
+        sz=$(apt-cache show "$1" 2>/dev/null | grep "^Size:" | head -1 | awk '{print $2}')
+        if [[ -z $sz ]]; then
+            # dpkg 获取已安装大小（remove 包，单位 KB）
+            sz=$(dpkg -s "$1" 2>/dev/null | grep "^Installed-Size:" | head -1 | awk '{print $2}')
+            [[ -n $sz ]] && sz=$(( sz * 1024 ))
+        fi
+        echo "${sz:-1048576}"
+    }
+
+    for pkg in "${del_list[@]}" "${add_list[@]}" "${upgrade_list[@]}"; do
+        local sz
+        sz=$(get_size "$pkg")
+        pkg_size["$pkg"]=$sz
+        total_size=$(( total_size + sz ))
+    done
+    [[ $total_size -eq 0 ]] && total_size=1
+
+    # === 逐包处理（带重试，任一包失败则立即退出） ===
+    local count=0
+    local done_size=0
+
+    pkg_do() {
+        local verb="$1" cmd="$2" pkg="$3"
+        local attempt=0
+        local ok=0
+
+        # apt 执行前先绘制当前包信息，让用户立即知道在处理什么
+        local curr_pct=$(( done_size * 100 / total_size ))
+        fb_render "$curr_pct" "[$verb] $pkg" "$(( count + 1 ))" "$total" \
+            "$BOARD_VER" "$NEW_VERSION"
+
+        while [[ $attempt -lt 3 ]]; do
+            attempt=$(( attempt + 1 ))
+
+            if apt-get "$cmd" -y \
+                -o Dir::Etc::sourcelist="$source_file" \
+                -o Dir::Etc::sourceparts="-" \
+                -o APT::Get::List-Cleanup="0" \
+                "$pkg" 2>/dev/null; then
+                ok=1
+                break
+            fi
+
+            [[ $attempt -lt 3 ]] && sleep 2
+        done
+
+        if [[ $ok -eq 0 ]]; then
+            fb_render_error "$verb  $pkg" "$BOARD_VER" "$NEW_VERSION"
+            fb_cleanup
+            exit 1
+        fi
+
+        count=$(( count + 1 ))
+        done_size=$(( done_size + ${pkg_size["$pkg"]:-1048576} ))
+        local pct=$(( done_size * 100 / total_size ))
+        [[ $pct -gt 99 ]] && pct=99
+        fb_render "$pct" "[$verb] $pkg" "$count" "$total" \
+            "$BOARD_VER" "$NEW_VERSION"
+    }
+
+    for pkg in "${del_list[@]}"; do
+        pkg_do "Remove"  remove  "$pkg"
+    done
+    for pkg in "${add_list[@]}"; do
+        pkg_do "Install" install "$pkg"
+    done
+    for pkg in "${upgrade_list[@]}"; do
+        pkg_do "Upgrade" install "$pkg"
+    done
+
+    # === 全部成功，收尾 ===
+    fb_render 99 "Writing version info..." "$count" "$total" \
+        "$BOARD_VER" "$NEW_VERSION"
+
+    local new_date
+    new_date=$(grep -o '\[[^]]*\]' "$FILE_LOG_SAVE" | head -n 1 | tr -d '[]')
+
+    if [[ -f $RELEASE_FILE ]]; then
+        sed -i "s/^version=.*/version=$NEW_VERSION/" "$RELEASE_FILE"
+        sed -i "s/^date=.*/date=$new_date/" "$RELEASE_FILE"
+    else
+        cat > "$RELEASE_FILE" <<EOF
+version=$NEW_VERSION
+date=$new_date
+os_type=$BOARD_OS_TYPE
+EOF
+    fi
+
+    fb_render 100 "Update complete. Please reboot." "$count" "$total" \
+        "$BOARD_VER" "$NEW_VERSION"
+    fb_cleanup
+    reboot
+}
+
+
+# ============================================================
+# 自更新
+# ============================================================
+self_update() {
+    wget -q -c "$THIS_SCRIPT_URL" -O "$THIS_SCRIPT_SAVE" || {
+        echo_red "get updates ... [error]"
+        exit 1
+    }
+
+    tar -xf "$THIS_SCRIPT_SAVE" -C /tmp || {
+        echo_red "unzip the file ... [error]"
+        exit 1
+    }
+
+    local new_ver
+    new_ver=$(grep -o 'THIS_SCRIPT_VERSION=[0-9.]*' "$THIS_SCRIPT_FILE" | cut -d '=' -f 2)
+
+    if version_gt "$new_ver" "$THIS_SCRIPT_VERSION"; then
+        cp "$THIS_SCRIPT_FILE" "$0"
+        exec bash "$0" no_update
+    fi
+}
+
+# ============================================================
+# Framebuffer 绘制模块（Python 脚本嵌入 shell，无需外部文件）
+# ============================================================
+
+FB_PY="/tmp/.wpi-fbdraw.py"
+FB_DEV="/dev/fb0"
+
+fb_init() {
+    # 检查依赖
+    if ! python3 -c "import numpy,cv2" 2>/dev/null; then
+        echo "fbdraw: numpy or cv2 not available, fb mode disabled"
+        return 1
+    fi
+    [[ -e $FB_DEV ]] || { echo "fbdraw: $FB_DEV not found"; return 1; }
+
+    # 写入嵌入的 Python 脚本到临时文件
+    cat > "$FB_PY" << 'PYEOF'
+#!/usr/bin/env python3
+"""fbdraw - single-frame framebuffer renderer (embedded)"""
+import sys,os,mmap,argparse
+import numpy as np
+import cv2
+from pathlib import Path
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--progress", type=int, default=0)
+    ap.add_argument("--status",  default="")
+    ap.add_argument("--count",   type=int, default=0)
+    ap.add_argument("--total",   type=int, default=1)
+    ap.add_argument("--from-ver", default="")
+    ap.add_argument("--to-ver",   default="")
+    ap.add_argument("--fail-list", default="")
+    ap.add_argument("--fb-dev",   default="/dev/fb0")
+    args = ap.parse_args()
+
+    fb_dev = args.fb_dev
+    base   = Path(f"/sys/class/graphics/{Path(fb_dev).name}")
+    fw, fh = map(int, (base / "virtual_size").read_text().strip().split(","))
+    bpp    = int((base / "bits_per_pixel").read_text().strip())
+    sp     = base / "stride"
+    fb_stride = int(sp.read_text().strip()) if sp.exists() else fw * bpp // 8
+
+    vw, vh = fh, fw          # 旋转 90° 后的可视区域
+    img    = np.zeros((vh, vw, 3), dtype=np.uint8)
+    img[:] = (32, 24, 16)    # 底色
+    m = 32
+
+    # --- 标题：WalnutPi + 版本号（同一行） ---
+    title = "WalnutPi"
+    (tw, th), _ = cv2.getTextSize(title, cv2.FONT_HERSHEY_DUPLEX, 2.0, 3)
+    title_y = m + 56
+    cv2.putText(img, title, (m, title_y),
+                cv2.FONT_HERSHEY_DUPLEX, 2.0, (255, 180, 40), 3)
+    # 版本号跟在 WalnutPi 右侧，同基线
+    if args.from_ver or args.to_ver:
+        cv2.putText(img, f"  {args.from_ver}  ->  {args.to_ver}",
+                    (m + tw + 12, title_y),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.65, (160, 160, 160), 2)
+
+    # 底部警告位置（共用）
+    tip_y = vh - m
+
+    if args.fail_list:
+        # ============================
+        #  错误页面
+        # ============================
+        fail_items = [x.strip() for x in args.fail_list.strip().split("\n") if x.strip()]
+
+        # 失败标题
+        fail_title = "UPDATE FAILED"
+        (ftw, fth), _ = cv2.getTextSize(fail_title, cv2.FONT_HERSHEY_DUPLEX, 1.2, 2)
+        cv2.putText(img, fail_title, (vw // 2 - ftw // 2, vh // 2 - 40),
+                    cv2.FONT_HERSHEY_DUPLEX, 1.2, (200, 60, 40), 2)
+
+        # 副标题
+        sub = "The following packages failed after 3 retries:"
+        (sw, sh), _ = cv2.getTextSize(sub, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 1)
+        cv2.putText(img, sub, (vw // 2 - sw // 2, vh // 2),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (160, 160, 160), 1)
+
+        # 失败包列表
+        max_show = 6
+        list_y = vh // 2 + 28
+        for i, item in enumerate(fail_items[:max_show]):
+            cv2.putText(img, f"  {item}", (m + 20, list_y + i * 24),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (220, 100, 80), 1)
+        if len(fail_items) > max_show:
+            cv2.putText(img, f"  ... and {len(fail_items) - max_show} more",
+                        (m + 20, list_y + max_show * 24),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (160, 160, 160), 1)
+
+        # 底部提示
+        hint = "Please check network and run again."
+        (hw, hh), _ = cv2.getTextSize(hint, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 1)
+        cv2.putText(img, hint, (vw // 2 - hw // 2, tip_y - 50),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (140, 140, 140), 1)
+
+    else:
+        # ============================
+        #  正常进度页面
+        # ============================
+        # --- 进度条 ---
+        bh = 28
+        bx, by, bw = m, vh // 2 - 68, vw - 2 * m
+
+        cv2.rectangle(img, (bx, by), (bx + bw, by + bh), (50, 50, 50), -1)
+        fill = int(bw * args.progress / 100)
+        if fill > 0:
+            cv2.rectangle(img, (bx, by), (bx + fill, by + bh),
+                          (0, int(130 + args.progress * 0.8), 0), -1)
+
+        # --- 状态文本（垂直居中，超长自动截断） ---
+        sy = vh // 2
+        if args.status:
+            s = args.status
+            (sw, _), _ = cv2.getTextSize(s, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 1)
+            max_w = vw - 2 * m
+            while sw > max_w and len(s) > 4:
+                s = s[:-4] + "..."
+                (sw, _), _ = cv2.getTextSize(s, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 1)
+            cv2.putText(img, s, (m, sy),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (150, 150, 150), 1)
+
+        # 只有处理阶段（count>0）才显示包计数
+        if args.count > 0:
+            cv2.putText(img, f"[ {args.count} / {args.total} ]", (m, sy + 45),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1.0, (200, 200, 200), 2)
+
+    # --- 底部警告（两种页面共用） ---
+    cv2.line(img, (m, tip_y - 26), (vw - m, tip_y - 26), (55, 55, 55), 1)
+    cv2.putText(img, "Do not power off or disconnect", (m, tip_y - 6),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.55, (90, 90, 90), 1)
+
+    # --- 旋转 90° 并写入 fb ---
+    rotated = cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)
+
+    if bpp == 16:
+        r = rotated[:,:,2].astype(np.uint16)
+        g = rotated[:,:,1].astype(np.uint16)
+        b = rotated[:,:,0].astype(np.uint16)
+        pix = ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3)
+    elif bpp == 24:
+        pix = rotated
+    else:
+        pix = np.dstack([rotated, np.zeros(rotated.shape[:2], dtype=np.uint8)])
+
+    raw = pix.tobytes()
+    ph  = pix.shape[0]
+    ps  = pix.shape[1] * bpp // 8
+
+    fb = os.open(fb_dev, os.O_RDWR)
+    buf = mmap.mmap(fb, fb_stride * fh, mmap.MAP_SHARED, mmap.PROT_WRITE)
+    try:
+        if ps == fb_stride:
+            buf[:len(raw)] = raw
+        else:
+            for row in range(ph):
+                so = row * ps
+                do = row * fb_stride
+                buf[do:do + ps] = raw[so:so + ps]
+    finally:
+        buf.close()
+        os.close(fb)
+
+if __name__ == "__main__":
+    main()
+PYEOF
+    chmod +x "$FB_PY"
+    return 0
+}
+
+fb_render() {
+    [[ -f $FB_PY ]] || return
+    python3 "$FB_PY" \
+        --progress "${1:-0}" \
+        --status   "${2:-}" \
+        --count    "${3:-0}" \
+        --total    "${4:-1}" \
+        --from-ver "${5:-}" \
+        --to-ver   "${6:-}" \
+        2>/dev/null
+}
+
+fb_render_error() {
+    [[ -f $FB_PY ]] || return
+    python3 "$FB_PY" \
+        --fail-list "${1:-}" \
+        --from-ver  "${2:-}" \
+        --to-ver    "${3:-}" \
+        2>/dev/null
+}
+
+fb_cleanup() {
+    rm -f "$FB_PY"
+}
+
+# ============================================================
+# 主入口
+# ============================================================
+BOARD_MODEL=$(detect_board_model)
+SOURCE_STR_WALNUTPI="deb [trusted=yes] http://${SERVER_DOMAIN}//debian/ bookworm ${BOARD_MODEL}"
+SOURCE_STR_TSINGHUA="deb http://mirrors.tuna.tsinghua.edu.cn/debian bookworm main"
+PATCH_LIST_URL="http://${SERVER_DOMAIN}/debian/patch-list/${BOARD_MODEL}.gz"
+
+# 清理旧残留 / 写入 apt 源
+rm -rf "$PATH_PATCH_LIST"
+mkdir -p "$PATH_PATCH_LIST"
+echo -e "$SOURCE_STR_WALNUTPI" > "$TMP_SOURCE_FILE_WPI"
+echo -e "$SOURCE_STR_WALNUTPI" > "$TMP_SOURCE_FILE"
+echo -e "$SOURCE_STR_TSINGHUA" >> "$TMP_SOURCE_FILE"
+
+setup_i18n
+
+# 删除 pip 的 EXTERNALLY-MANAGED 标记
+find /usr/lib -type f -name "EXTERNALLY-MANAGED" -delete 2>/dev/null || true
+
+# 权限检查
 if [[ $EUID -ne 0 ]]; then
-    echo -e "${STR_AUTO['sudo_warn']}"
+    echo -e "${STR[sudo_warn]}"
     exit 1
 fi
 
-echo -e "$SOURCE_STR_WALNUTPI \n" > $TMP_SOURCE_FILE_WPI
-echo -e "$SOURCE_STR_WALNUTPI \n" > $TMP_SOURCE_FILE
-echo -e "$SOURCE_STR_TSINGHUA \n" >> $TMP_SOURCE_FILE
-COMMAND=$1
-COMMAND_VALUE=$2
+COMMAND="${1:-}"
 
+# 自更新
+[[ $COMMAND != "no_update" ]] && self_update
 
-# 获取网站上存储的本脚本,进行更新
-if [[ $COMMAND != "no_update" ]]; then
-    if [ -f $THIS_SCRIPT_SAVE ]; then
-        rm $THIS_SCRIPT_SAVE
-    fi
-    run_as_silent wget -c $THIS_SCRIPT_URL -O $THIS_SCRIPT_SAVE
-    if [ $? -ne 0 ]; then
-        echo_red "get updates ... [error]"
-        wget -c $THIS_SCRIPT_URL -O $THIS_SCRIPT_SAVE
-        exit 1
-    fi
-
-    run_as_silent tar -xvf $THIS_SCRIPT_SAVE -C /tmp
-    if [ $? -ne 0 ]; then
-        echo_red "unzip the file ... [error]"
-        tar -xvf $THIS_SCRIPT_SAVE -C /tmp
-        exit 1
-    fi
-    NEW_SCRIPT_VERSION=$(grep -o 'THIS_SCRIPT_VERSION=[0-9.]*' $THIS_SCRIPT_FILE | cut -d '=' -f 2)
-
-    if [[ "$NEW_SCRIPT_VERSION" > "$THIS_SCRIPT_VERSION" ]]; then
-        cp $THIS_SCRIPT_FILE $0
-        exec bash $0 no_update
-        
-    fi
-fi
-
-
-
-case $COMMAND in 
-    -v)
-        echo $THIS_SCRIPT_VERSION
-        exit 0
-        ;;
-            
-    -s)
-        run_as_silent  wget -c $LOG_URL -O $FILE_LOG_SAVE
-        NEW_VERSION=$(grep -o '\[[^]]*\] - [^ ]*' $FILE_LOG_SAVE | head -n 1 | awk '{print $3}')
-        echo "$NEW_VERSION "
-        exit 0
-        ;;
-    -l)
-        run_as_silent wget -c $LOG_URL -O $FILE_LOG_SAVE
-        if [ $? -ne 0 ]; then
-            echo_red "download the release log .... [error]"
-            wget -c $LOG_URL -O $FILE_LOG_SAVE
-            exit 1
-        fi
-        NEW_VERSION=$(grep -o '\[[^]]*\] - [^ ]*' $FILE_LOG_SAVE | head -n 1 | awk '{print $3}')
-        if [[ -f $RELEASE_FILE ]]; then
-            BOARD_DATE=$(grep '^date=' $RELEASE_FILE | cut -d '=' -f 2)
-            BOARD_DATE_SECONDS=$(date -d"$BOARD_DATE" +%s)
-        else
-            BOARD_DATE_SECONDS=0
-        fi
-        DATE_LAST=""
-        DATES_IN_LOG=$(grep -o '\[[^]]*\]' $FILE_LOG_SAVE | tr -d '[]')
-        for DATE in $DATES_IN_LOG; do
-            DATE_SECONDS=$(date -d"$DATE" +%s)
-            if (( DATE_SECONDS <= BOARD_DATE_SECONDS )); then
-                DATE_LAST=$DATE
-                break
-            fi
-        done
-        if [ -n "$DATE_LAST" ]; then
-            sed -n "1,/\\[$DATE_LAST\\]/p" $FILE_LOG_SAVE | sed '/\['$DATE_LAST'\]/d'
-        else
-            cat $FILE_LOG_SAVE
-        fi
-        exit 0
-        ;;
-    install)
-        
-        run_status "get the package info ..." apt-get update -o Dir::Etc::sourcelist="$TMP_SOURCE_FILE_WPI" -o Dir::Etc::sourceparts="-" -o APT::Get::List-Cleanup="0"
-        apt-get install -o Dir::Etc::sourcelist="$TMP_SOURCE_FILE" -o Dir::Etc::sourceparts="-" -o APT::Get::List-Cleanup="0" $COMMAND_VALUE
-        exit 0
-        ;;
+# 子命令分发
+case $COMMAND in
+    -v)      cmd_version ;;
+    -s)      cmd_server_version ;;
+    -l)      cmd_log ;;
+    install) cmd_install "${2:-}" ;;
+    --fb)    do_update_fb "$@" ;;
+    *)       do_update "$@" ;;
 esac
 
-
-if [[ -f $RELEASE_FILE ]]; then
-    # 从文件中获取版本号和日期
-    BOARD_VER=$(grep '^version=' $RELEASE_FILE | cut -d '=' -f 2)
-    BOARD_DATE=$(grep '^date=' $RELEASE_FILE | cut -d '=' -f 2)
-    BOARD_OS_TYPE=$(grep '^os_type=' $RELEASE_FILE | cut -d '=' -f 2)
-fi
-# 获取release.log
-if [ -f $FILE_LOG_SAVE ]; then
-    rm $FILE_LOG_SAVE
-fi
-run_status "download the release log ...."  wget -c $LOG_URL -O $FILE_LOG_SAVE
-NEW_VERSION=$(grep -o '\[[^]]*\] - [^ ]*' $FILE_LOG_SAVE | head -n 1 | awk '{print $3}')
-
-# 如果release.log最新一项的日期大于本地log的
-BOARD_DATE_SECONDS=$(date -d"$BOARD_DATE" +%s)
-DATES_IN_LOG=$(grep -o '\[[^]]*\]' $FILE_LOG_SAVE | tr -d '[]')
-LAST_DATE=""
-HAS_NEW=""
-for DATE in $DATES_IN_LOG; do
-    DATE_SECONDS=$(date -d"$DATE" +%s)
-    if (( DATE_SECONDS > BOARD_DATE_SECONDS )); then
-        HAS_NEW="yes"
-    fi
-    if (( DATE_SECONDS <= BOARD_DATE_SECONDS )); then
-        LAST_DATE=$DATE
-        break
-    fi
-done
-
-# 如果release.log的版本号大于本地的
-new_version_parts=(${NEW_VERSION//./ })
-board_ver_parts=(${BOARD_VER//./ })
-for ((i=0; i<${#new_version_parts[@]}; i++)); do
-    if [ ${#board_ver_parts[@]} -le $i ]; then
-        board_ver_parts+=(0)
-    fi
-    if [ ${new_version_parts[$i]} -gt ${board_ver_parts[$i]} ]; then
-        HAS_NEW="yes"
-    fi
-done
-if [[ $* =~ -N ]]; then
-    HAS_NEW=yes
-fi
-if [ -z "$HAS_NEW" ]; then
-    echo -e  "${STR_AUTO['version_newest_h']}[${BOARD_VER}]${STR_AUTO['version_newest_l']}"
-    exit 0
-fi
-
-# 输出是否安装的提示语
-clear
-echo -e "[${BOARD_VER}] -> \033[32m[${NEW_VERSION}]\033[0m"
-echo -e "${STR_AUTO['backup_warn']}"
-
-sed -n "1,/\\[$LAST_DATE\\]/p" $FILE_LOG_SAVE | sed '/\['$LAST_DATE'\]/d'
-echo -n "${STR_AUTO['are_u_redy']} "
-
-if [[ $* =~ -y ]] || [[  $* =~ -Y ]]; then
-    echo ""
-else
-    read -p "[Y/n]" CHOICE
-    if [[ "$CHOICE" != "y" && "$CHOICE" != "Y" ]]; then
-        echo -e "${STR_AUTO['abort']}."
-        exit 1
-    fi
-
-fi
-
-cd $PATH_PATCH_LIST
-run_status "download the package list" wget $PATCH_LIST_URL -O list.gz
-run_status "unzip the package list" tar -xvf list.gz
-run_status "apt-get update" apt-get update -o Dir::Etc::sourcelist="$TMP_SOURCE_FILE" -o Dir::Etc::sourceparts="-" -o APT::Get::List-Cleanup="0"
-
-# 参数1是写着包列表的文件
-# 参数2是要输出的信息
-# 参数3是要执行的apt命令
-package_opt(){
-    local LIST_FILE=$1
-    local MESSAGE=$2
-    local COMMAND=$3
-    local TOTAL_PACKAGES=$(wc -l < "$LIST_FILE")
-    local COUNT=0
-
-    while read PACKAGE_NAME
-    do
-        COUNT=$((COUNT+1))
-        echo -e "$MESSAGE [ $COUNT / $TOTAL_PACKAGES ] \t $PACKAGE_NAME " 
-        apt-get $COMMAND -y -o Dir::Etc::sourcelist="$TMP_SOURCE_FILE" -o Dir::Etc::sourceparts="-" -o APT::Get::List-Cleanup="0" $PACKAGE_NAME
-    done < "$LIST_FILE"
-}
-
-
-    
-# 删除指定包
-file="del-$BOARD_OS_TYPE" 
-new_file="del-$BOARD_OS_TYPE-available" 
-while IFS= read -r package
-do
-    if dpkg -l | grep -q "^ii  $package "; then
-        echo "$package" >> "$new_file"
-    fi
-done < "$file"
-[[ -f $new_file ]] && package_opt "$new_file" "remove" remove 
-
-
-# 增加新包
-file="add-$BOARD_OS_TYPE" # 替换为你的文件路径
-new_file="add-$BOARD_OS_TYPE-available" # 替换为你的新文件路径
-while IFS= read -r package
-do
-    if ! dpkg -l | grep -q "^ii  $package "; then
-        echo "$package" >> "$new_file"
-    fi
-done < "$file"
-[[ -f $new_file ]] && package_opt "$new_file" "add" install
-
-# 获取更新，安装
-apt-get --just-print upgrade -o Dir::Etc::sourcelist="$TMP_SOURCE_FILE_WPI" -o Dir::Etc::sourceparts="-" -o APT::Get::List-Cleanup="0" | grep 'Inst' | cut -d ' ' -f 2 >  $FILE_PACKAGES
-package_opt "$FILE_PACKAGES" "update"  install
-
-
-# 替换新版本号
-sed -i "s/^version=.*/version=$NEW_VERSION/" $RELEASE_FILE
-
-# 替换新时间
-DATE=$(grep -o '\[[^]]*\]' $FILE_LOG_SAVE | head -n 1 | tr -d '[]')
-sed -i "s/^date=.*/date=$DATE/" $RELEASE_FILE
-
-echo_green "\n\n【OK】please reboot"
