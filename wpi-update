@@ -538,6 +538,7 @@ do_update_fb() {
         pkg_do "Upgrade" install "$pkg"
     done
 
+    sleep 100
     # === 全部成功，收尾 ===
     fb_render 99 "Writing version info..." "$count" "$total" \
         "$BOARD_VER" "$NEW_VERSION"
@@ -796,8 +797,9 @@ fb_render_error() {
 # 参数: $1 = 父进程 PID（父进程退出后定时器自动停止）
 fb_timer_start() {
     local parent_pid=$1
+    local start_ts
+    start_ts=$(date +%s)
     {
-        local elapsed=0
         while kill -0 "$parent_pid" 2>/dev/null; do
             if [[ -f $FB_STATE_FILE ]]; then
                 IFS='|' read -r prog status count total fv tv < "$FB_STATE_FILE"
@@ -808,11 +810,10 @@ fb_timer_start() {
                     --total    "${total:-1}" \
                     --from-ver "${fv:-}" \
                     --to-ver   "${tv:-}" \
-                    --elapsed  "$elapsed" \
+                    --elapsed  "$(( $(date +%s) - start_ts ))" \
                     2>/dev/null
             fi
             sleep 1
-            elapsed=$(( elapsed + 1 ))
         done
     } &
     echo $! > "$FB_TIMER_PID"
