@@ -152,6 +152,8 @@ do_update_fb() {
         systemctl stop cybercam-desktop.service
     fi
 
+    # 启动背景计时器（每秒在画面上刷新已用时间，让用户感知程序在运行）
+    fb_timer_start $$
 
     # === 前期准备（全部在 0% 完成，不推进进度条） ===
     fb_render 0 "Preparing update..." 0 1
@@ -326,7 +328,7 @@ os_type=$BOARD_OS_TYPE
 EOF
     fi
 
-    fb_render 100 "Update complete. Please reboot." "$count" "$total" \
+    fb_render 100 "Update complete. rebooting ......" "$count" "$total" \
         "$BOARD_VER" "$NEW_VERSION"
     fb_cleanup
     reboot

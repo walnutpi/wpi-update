@@ -380,6 +380,8 @@ do_update_fb() {
         systemctl stop cybercam-desktop.service
     fi
 
+    # 启动背景计时器（每秒在画面上刷新已用时间，让用户感知程序在运行）
+    fb_timer_start $$
 
     # === 前期准备（全部在 0% 完成，不推进进度条） ===
     fb_render 0 "Preparing update..." 0 1
@@ -554,7 +556,7 @@ os_type=$BOARD_OS_TYPE
 EOF
     fi
 
-    fb_render 100 "Update complete. Please reboot." "$count" "$total" \
+    fb_render 100 "Update complete. rebooting ......" "$count" "$total" \
         "$BOARD_VER" "$NEW_VERSION"
     fb_cleanup
     reboot
@@ -590,6 +592,8 @@ self_update() {
 
 FB_PY="/tmp/.wpi-fbdraw.py"
 FB_DEV="/dev/fb0"
+FB_STATE_FILE="/tmp/.wpi-fb-state"
+FB_TIMER_PID="/tmp/.wpi-fb-timer.pid"
 
 fb_init() {
     # 检查依赖
@@ -617,6 +621,7 @@ def main():
     ap.add_argument("--from-ver", default="")
     ap.add_argument("--to-ver",   default="")
     ap.add_argument("--fail-list", default="")
+    ap.add_argument("--elapsed",  type=int, default=0)
     ap.add_argument("--fb-dev",   default="/dev/fb0")
     args = ap.parse_args()
 
@@ -708,10 +713,17 @@ def main():
             cv2.putText(img, s, (m, sy),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, (150, 150, 150), 1)
 
-        # 只有处理阶段（count>0）才显示包计数
+        # 包计数
         if args.count > 0:
             cv2.putText(img, f"[ {args.count} / {args.total} ]", (m, sy + 45),
                         cv2.FONT_HERSHEY_SIMPLEX, 1.0, (200, 200, 200), 2)
+
+        # 已用时间（右下角，秒级刷新让用户感知程序在运行）
+        if args.elapsed > 0:
+            ts = f"{args.elapsed // 60:02d}:{args.elapsed % 60:02d}"
+            (tw_ts, th_ts), _ = cv2.getTextSize(ts, cv2.FONT_HERSHEY_SIMPLEX, 0.9, 2)
+            cv2.putText(img, ts, (vw - m - tw_ts, tip_y - 30),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.9, (160, 160, 160), 2)
 
     # --- 底部警告（两种页面共用） ---
     cv2.line(img, (m, tip_y - 26), (vw - m, tip_y - 26), (55, 55, 55), 1)
@@ -758,6 +770,8 @@ PYEOF
 
 fb_render() {
     [[ -f $FB_PY ]] || return
+    # 保存状态供背景定时器每秒刷新使用
+    echo "${1:-0}|${2:-}|${3:-0}|${4:-1}|${5:-}|${6:-}" > "$FB_STATE_FILE"
     python3 "$FB_PY" \
         --progress "${1:-0}" \
         --status   "${2:-}" \
@@ -765,6 +779,7 @@ fb_render() {
         --total    "${4:-1}" \
         --from-ver "${5:-}" \
         --to-ver   "${6:-}" \
+        --elapsed  "${7:-0}" \
         2>/dev/null
 }
 
@@ -777,7 +792,39 @@ fb_render_error() {
         2>/dev/null
 }
 
+# 启动背景计时器：每秒用最新状态 + 已用秒数重新绘制 fb
+# 参数: $1 = 父进程 PID（父进程退出后定时器自动停止）
+fb_timer_start() {
+    local parent_pid=$1
+    {
+        local elapsed=0
+        while kill -0 "$parent_pid" 2>/dev/null; do
+            if [[ -f $FB_STATE_FILE ]]; then
+                IFS='|' read -r prog status count total fv tv < "$FB_STATE_FILE"
+                python3 "$FB_PY" \
+                    --progress "${prog:-0}" \
+                    --status   "${status:-}" \
+                    --count    "${count:-0}" \
+                    --total    "${total:-1}" \
+                    --from-ver "${fv:-}" \
+                    --to-ver   "${tv:-}" \
+                    --elapsed  "$elapsed" \
+                    2>/dev/null
+            fi
+            sleep 1
+            elapsed=$(( elapsed + 1 ))
+        done
+    } &
+    echo $! > "$FB_TIMER_PID"
+}
+
+fb_timer_stop() {
+    [[ -f $FB_TIMER_PID ]] && kill "$(cat "$FB_TIMER_PID")" 2>/dev/null
+    rm -f "$FB_TIMER_PID" "$FB_STATE_FILE"
+}
+
 fb_cleanup() {
+    fb_timer_stop
     rm -f "$FB_PY"
 }
 
