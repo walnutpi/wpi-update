@@ -8,6 +8,7 @@ do_update() {
         if command -v systemd-run >/dev/null 2>&1; then
             # 以临时系统服务运行，彻底脱离登录会话，终端断开不影响更新
             systemd-run --unit=wpi-update-fb --collect --quiet \
+                -p User=root \
                 --description="wpi-update (fb mode)" "$self_path" --fb
         else
             # 退化方案：独立会话 + 忽略 SIGHUP + 脱离终端标准流
