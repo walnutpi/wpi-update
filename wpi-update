@@ -1,6 +1,4 @@
 #!/bin/bash
-set -euo pipefail
-
 # ============================================================
 # 配置常量
 # ============================================================
@@ -238,7 +236,7 @@ do_update() {
             systemd-run --unit=wpi-update-fb --collect --quiet \
                 -p User=root \
                 -p AmbientCapabilities=CAP_SYS_BOOT \
-                --description="wpi-update (fb mode)" "$self_path" --fb > run.log 2>&1
+                --description="wpi-update (fb mode)" "$self_path" --fb > /tmp/wpi-update.log 2>&1
         else
             # 退化方案：独立会话 + 忽略 SIGHUP + 脱离终端标准流
             setsid nohup "$self_path" --fb </dev/null >/dev/null 2>&1 &
@@ -325,7 +323,7 @@ do_update() {
         -o Dir::Etc::sourcelist="$source_file_wpi" \
         -o Dir::Etc::sourceparts="-" \
         -o APT::Get::List-Cleanup="0" 2>/dev/null \
-        | grep '^Inst' | cut -d ' ' -f 2)
+        | grep '^Inst' | cut -d ' ' -f 2 || true)
     for pkg in $pkgs; do
         upgrade_list+=("$pkg")
     done
@@ -392,6 +390,7 @@ do_update_fb() {
     download_release_log
     NEW_VERSION=$(get_newest_version)
 
+    echo "测试的1"
     HAS_NEW=""
     LAST_DATE=""
     check_update "$NEW_VERSION"
@@ -406,6 +405,7 @@ do_update_fb() {
 
     mkdir -p "$PATH_PATCH_LIST"
     cd "$PATH_PATCH_LIST"
+    echo "测试的2"
 
     local source_file="$TMP_SOURCE_FILE"
     local source_file_wpi="$TMP_SOURCE_FILE_WPI"
@@ -424,6 +424,7 @@ do_update_fb() {
 
     # 收集包列表
     local del_list=() add_list=() upgrade_list=()
+    echo "测试的3"
 
     local installed
     installed=$(dpkg -l | awk '/^ii/ {print $2}')
@@ -435,6 +436,7 @@ do_update_fb() {
             echo "$installed" | grep -qxF "$pkg" && del_list+=("$pkg")
         done < "$del_file"
     fi
+    echo "测试的5"
 
     local add_file="add-${BOARD_OS_TYPE}"
     if [[ -f $add_file ]]; then
@@ -444,15 +446,18 @@ do_update_fb() {
         done < "$add_file"
     fi
 
+    echo "测试的6"
     local pkgs
     pkgs=$(apt-get --just-print upgrade \
         -o Dir::Etc::sourcelist="$source_file_wpi" \
         -o Dir::Etc::sourceparts="-" \
         -o APT::Get::List-Cleanup="0" 2>/dev/null \
         | grep '^Inst' | cut -d ' ' -f 2)
+    echo "测试的89"
     for pkg in $pkgs; do
         upgrade_list+=("$pkg")
     done
+    echo "测试的8"
 
     local total=$(( ${#del_list[@]} + ${#add_list[@]} + ${#upgrade_list[@]} ))
     if [[ $total -eq 0 ]]; then
@@ -460,6 +465,7 @@ do_update_fb() {
         fb_cleanup
         exit 0
     fi
+    echo "测试的7"
 
     # === 收集每个包的大小（用于按体积加权进度） ===
     fb_render 0 "Computing package sizes..." 0 1 "$BOARD_VER" "$NEW_VERSION"
@@ -528,6 +534,7 @@ do_update_fb() {
         [[ $pct -gt 99 ]] && pct=99
         fb_render "$pct" "[$verb] $pkg" "$count" "$total" \
             "$BOARD_VER" "$NEW_VERSION"
+        sync
     }
 
     for pkg in "${del_list[@]}"; do
@@ -560,7 +567,7 @@ EOF
 
     fb_render 100 "Update complete. rebooting ......" "$count" "$total" \
         "$BOARD_VER" "$NEW_VERSION"
-    fb_cleanup
+    # fb_cleanup
     reboot -f
 }
 
