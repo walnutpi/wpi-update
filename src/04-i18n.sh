@@ -4,7 +4,7 @@
 setup_i18n() {
     declare -gA STR
 
-    if [[ $LANG == zh_CN* ]]; then
+    if [[ "x$LANG" == xzh_CN* ]]; then
         LOG_URL="${LOG_URL_PREFIX}/${BOARD_MODEL}_cn.log"
         STR[sudo_warn]="\n\t请使用sudo来运行本指令\n"
         STR[newest]="\n\t你的系统版本已经是最新的 [%s]，无需更新\n"
