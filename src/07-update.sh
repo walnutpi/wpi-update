@@ -332,6 +332,6 @@ EOF
     fb_render 100 "Update complete. rebooting ......" "$count" "$total" \
         "$BOARD_VER" "$NEW_VERSION"
     fb_cleanup
-    reboot
+    reboot -f
 }
 
