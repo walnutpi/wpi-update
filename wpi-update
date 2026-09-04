@@ -2,7 +2,7 @@
 # ============================================================
 # 配置常量
 # ============================================================
-THIS_SCRIPT_VERSION=1.10
+THIS_SCRIPT_VERSION=2.0
 SERVER_DOMAIN="apt.walnutpi.com"
 THIS_SCRIPT_URL="http://${SERVER_DOMAIN}//debian/wpi-update.gz"
 THIS_SCRIPT_SAVE="/tmp/wpi-update.gz"
